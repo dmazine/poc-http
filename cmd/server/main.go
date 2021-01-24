@@ -13,6 +13,12 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// TLS certificate
+const (
+	ServerCertFile       = "cmd/server/server.crt"
+	ServerKeyFile        = "cmd/server/server.key"
+)
+
 // Server settings
 const (
 	ServerAddr           = ":8443"
@@ -20,8 +26,6 @@ const (
 	ServerWriteTimeout   = 1000 * time.Millisecond
 	ServerIdleTimeout    = 60000 * time.Millisecond
 	ServerMaxHeaderBytes = 1 << 20
-	ServerCertFile       = "cmd/server/server.crt"
-	ServerKeyFile        = "cmd/server/server.key"
 )
 
 // Rate limit settings
@@ -32,13 +36,18 @@ const (
 
 // Time limit settings
 const (
-	TimeLimit = 0 * time.Millisecond
+	TimeLimit = 500 * time.Millisecond
 )
 
 // Delay
-const (
+var (
 	Delay = 0 * time.Millisecond
 )
+
+// Update delay request
+type UpdateDelayRequest struct {
+	Delay int64 `json:"delay"`
+}
 
 func main() {
 	gin.SetMode(gin.ReleaseMode)
@@ -76,6 +85,8 @@ func newHandler() http.Handler {
 	handler.Use(WithRateLimit(RateLimitRate, RateLimitBurst))
 	handler.Use(WithTimeLimit(TimeLimit))
 	handler.GET("/ping", handlePing)
+	handler.GET("/delay", handleGetDelay)
+	handler.PUT("/delay", handleUpdateDelay)
 	return handler
 }
 
@@ -114,7 +125,7 @@ func WithTimeLimit(timeout time.Duration) gin.HandlerFunc {
 		defer func() {
 			cancel()
 			if ctx.Err() == context.DeadlineExceeded {
-				log.Error("Middleware context: Deadline exceeded", ctx.Err())
+				log.Error("Middleware context: ", ctx.Err())
 			}
 		}()
 
@@ -131,4 +142,21 @@ func handlePing(c *gin.Context) {
 	time.Sleep(Delay)
 
 	c.JSON(http.StatusOK, gin.H{"message": "pong"})
+}
+
+func handleGetDelay(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"delay": Delay / time.Millisecond})
+}
+
+func handleUpdateDelay(c *gin.Context) {
+	var request UpdateDelayRequest
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	Delay = time.Duration(request.Delay) * time.Millisecond
+
+	c.Status(http.StatusOK)
 }

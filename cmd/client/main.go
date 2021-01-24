@@ -23,7 +23,7 @@ const (
 
 // HTTP client settings
 const (
-	HTTPClientTimeout = 500 * time.Millisecond
+	HTTPClientTimeout = 1000 * time.Millisecond
 )
 
 // HTTP transport settings
@@ -60,26 +60,33 @@ const (
 	TLSClientInsecureSkipVerify = true
 )
 
+// Load test settings
+const (
+	ConcurrentUsers = 249
+	RequestsPerUser = 100000
+)
+
 func main() {
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
 	})
 
 	client := newHTTPClient()
+	//client := newHTTP2Client()
 
 	var waitGroup sync.WaitGroup
 
-	for requesterId := 0; requesterId < 5; requesterId++ {
+	for user := 0; user < ConcurrentUsers; user++ {
 		waitGroup.Add(1)
 
 		contextLogger := log.WithFields(log.Fields{
-			"RequesterId": requesterId,
+			"user": user,
 		})
 
 		go func(logger *log.Entry) {
 			defer waitGroup.Done()
 
-			for requestCount := 0; requestCount < 10; requestCount++ {
+			for requestCount := 0; requestCount < RequestsPerUser; requestCount++ {
 				startTime := time.Now()
 
 				//statusCode, body, err := ping(client)
@@ -112,10 +119,26 @@ func main() {
 	waitGroup.Wait()
 }
 
+func newHTTP2Client() *http.Client {
+	return &http.Client{
+		Transport: newHTTP2Transport(),
+		Timeout:   HTTPClientTimeout,
+	}
+}
+
+func newHTTP2Transport() *http2.Transport {
+	return &http2.Transport{
+		TLSClientConfig:            newTLSClientConfig(),
+		AllowHTTP:                  AllowHTTP,
+		StrictMaxConcurrentStreams: StrictMaxConcurrentStreams,
+		ReadIdleTimeout:            ReadIdleTimeout,
+		PingTimeout:                PingTimeout,
+	}
+}
+
 func newHTTPClient() *http.Client {
 	return &http.Client{
-		//Transport: newHTTPTransport(),
-		Transport: newHTTP2Transport(),
+		Transport: newHTTPTransport(),
 		Timeout:   HTTPClientTimeout,
 	}
 }
@@ -138,22 +161,12 @@ func newHTTPTransport() http.RoundTripper {
 		ReadBufferSize:         HTTPTransportReadBufferSize,
 	}
 
-	//err := http2.ConfigureTransport(httpTransport)
-	//if err != nil {
-	//	panic(err)
-	//}
+	err := http2.ConfigureTransport(httpTransport)
+	if err != nil {
+		panic(err)
+	}
 
 	return httpTransport
-}
-
-func newHTTP2Transport() *http2.Transport {
-	return &http2.Transport{
-		TLSClientConfig:            newTLSClientConfig(),
-		AllowHTTP:                  AllowHTTP,
-		StrictMaxConcurrentStreams: StrictMaxConcurrentStreams,
-		ReadIdleTimeout:            ReadIdleTimeout,
-		PingTimeout:                PingTimeout,
-	}
 }
 
 func newDialContext() DialContext {
