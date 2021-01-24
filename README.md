@@ -1,3 +1,7 @@
+## 
+
+`WriteTimeout` must consider the `ReadTimeout` plus the request processing time.
+
 ## References
 
 - [So you want to expose Go on the Internet](https://blog.cloudflare.com/exposing-go-on-the-internet/)

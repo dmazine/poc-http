@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -10,13 +11,19 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/http2"
 )
 
 type DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
+// Server settings
+const (
+	ServerBaseURL = "https://localhost:8443"
+)
+
 // HTTP client settings
 const (
-	HTTPClientTimeout = 0 * time.Millisecond
+	HTTPClientTimeout = 500 * time.Millisecond
 )
 
 // HTTP transport settings
@@ -24,14 +31,22 @@ const (
 	HTTPTransportTLSHandshakeTimeout    = 0 * time.Millisecond
 	HTTPTransportDisableKeepAlives      = false
 	HTTPTransportMaxIdleConns           = 0
-	HTTPTransportMaxIdleConnsPerHost    = 0
+	HTTPTransportMaxIdleConnsPerHost    = 1000
 	HTTPTransportMaxConnsPerHost        = 0
-	HTTPTransportIdleConnTimeout        = 0 * time.Second
+	HTTPTransportIdleConnTimeout        = 60 * time.Second
 	HTTPTransportResponseHeaderTimeout  = 0 * time.Millisecond
 	HTTPTransportExpectContinueTimeout  = 0 * time.Millisecond
 	HTTPTransportMaxResponseHeaderBytes = 0
 	HTTPTransportWriteBufferSize        = 0
 	HTTPTransportReadBufferSize         = 0
+)
+
+// HTTP2 transport settings
+const (
+	AllowHTTP                  = true
+	StrictMaxConcurrentStreams = false
+	ReadIdleTimeout            = 0 * time.Millisecond
+	PingTimeout                = 0 * time.Millisecond
 )
 
 // Dialer settings
@@ -54,7 +69,7 @@ func main() {
 
 	var waitGroup sync.WaitGroup
 
-	for requesterId := 0; requesterId < 2; requesterId++ {
+	for requesterId := 0; requesterId < 5; requesterId++ {
 		waitGroup.Add(1)
 
 		contextLogger := log.WithFields(log.Fields{
@@ -64,22 +79,33 @@ func main() {
 		go func(logger *log.Entry) {
 			defer waitGroup.Done()
 
-			for j := 0; j < 100; j++ {
+			for requestCount := 0; requestCount < 10; requestCount++ {
 				startTime := time.Now()
 
-				err := ping(client)
+				//statusCode, body, err := ping(client)
+				_, _, err := ping(client)
 
 				stopTime := time.Now()
 				elapsedTime := stopTime.Sub(startTime)
 
-				logger.WithFields(log.Fields{
-					"Start":   startTime,
-					"Stop":    stopTime,
-					"Elapsed": elapsedTime,
-				}).Printf("Request finished with err [%v]\n", err)
+				if err != nil {
+					logger.WithFields(log.Fields{
+						"Start":   startTime,
+						"Stop":    stopTime,
+						"Elapsed": elapsedTime,
+					}).Printf("Request failed with error [%v]\n", err)
 
-				time.Sleep(1000 * time.Millisecond)
+					continue
+				}
+
+				//logger.WithFields(log.Fields{
+				//	"Start":   startTime,
+				//	"Stop":    stopTime,
+				//	"Elapsed": elapsedTime,
+				//}).Printf("Request finished with statusCode [%v] and body [%v]\n", statusCode, *body)
 			}
+
+			logger.Print("All requests executed")
 		}(contextLogger)
 	}
 
@@ -88,7 +114,8 @@ func main() {
 
 func newHTTPClient() *http.Client {
 	return &http.Client{
-		Transport: newHTTPTransport(),
+		//Transport: newHTTPTransport(),
+		Transport: newHTTP2Transport(),
 		Timeout:   HTTPClientTimeout,
 	}
 }
@@ -119,6 +146,16 @@ func newHTTPTransport() http.RoundTripper {
 	return httpTransport
 }
 
+func newHTTP2Transport() *http2.Transport {
+	return &http2.Transport{
+		TLSClientConfig:            newTLSClientConfig(),
+		AllowHTTP:                  AllowHTTP,
+		StrictMaxConcurrentStreams: StrictMaxConcurrentStreams,
+		ReadIdleTimeout:            ReadIdleTimeout,
+		PingTimeout:                PingTimeout,
+	}
+}
+
 func newDialContext() DialContext {
 	return (&net.Dialer{
 		Timeout:   DialerTimeout,
@@ -133,19 +170,22 @@ func newTLSClientConfig() *tls.Config {
 	return cfg
 }
 
-func ping(client *http.Client) error {
-	resp, err := client.Get("http://localhost:8080/ping")
+func ping(client *http.Client) (int, *string, error) {
+	url := fmt.Sprintf("%s/ping", ServerBaseURL)
 
+	resp, err := client.Get(url)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 
 	defer resp.Body.Close()
-	_, err = ioutil.ReadAll(resp.Body)
 
+	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 
-	return nil
+	data := string(body)
+
+	return resp.StatusCode, &data, nil
 }
