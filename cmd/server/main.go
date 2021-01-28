@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -53,7 +54,7 @@ type UpdateRateLimitRequest struct {
 // Update time limit request
 type UpdateTimeLimitRequest struct {
 	// Timeout in milliseconds
-	Timeout int64 `json:"timeout"`
+	TimeLimit int64 `json:"timeLimit"`
 }
 
 // Update delay request
@@ -66,7 +67,8 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 
 	log.SetFormatter(&log.TextFormatter{
-		FullTimestamp: true,
+		FullTimestamp:   true,
+		TimestampFormat: time.RFC3339Nano,
 	})
 	log.SetLevel(log.InfoLevel)
 
@@ -144,8 +146,9 @@ func WithTimeLimit(timeout time.Duration) gin.HandlerFunc {
 
 		defer func() {
 			cancel()
+
 			if ctx.Err() == context.DeadlineExceeded {
-				log.Error("Middleware context: ", ctx.Err())
+				fmt.Println("context timeout exceeded")
 			}
 		}()
 
@@ -159,17 +162,22 @@ var noTimeLimit = func(c *gin.Context) {
 }
 
 func handlePing(c *gin.Context) {
+	ctx := c.Request.Context()
+
 	select {
-	case <-time.After(2 * time.Second):
+	case <-time.After(Delay):
 		c.JSON(http.StatusOK, gin.H{"message": "pong"})
-	case <-c.Done():
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "request cancelled"})
+
+	case <-ctx.Done():
+		// if the context is done it timed out or was cancelled
+		c.JSON(http.StatusInternalServerError, buildError(ctx.Err().Error()))
+		return
 	}
 }
 
 func handleGetRateLimit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"rate": RateLimitRate,
+		"rate":  RateLimitRate,
 		"burst": RateLimitBurst,
 	})
 }
@@ -202,7 +210,7 @@ func handleUpdateTimeLimit(c *gin.Context) {
 		return
 	}
 
-	TimeLimit = time.Duration(request.Timeout) * time.Millisecond
+	TimeLimit = time.Duration(request.TimeLimit) * time.Millisecond
 
 	c.Status(http.StatusOK)
 }
