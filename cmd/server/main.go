@@ -15,8 +15,8 @@ import (
 
 // TLS certificate
 const (
-	ServerCertFile       = "cmd/server/server.crt"
-	ServerKeyFile        = "cmd/server/server.key"
+	ServerCertFile = "cmd/server/server.crt"
+	ServerKeyFile  = "cmd/server/server.key"
 )
 
 // Server settings
@@ -29,13 +29,13 @@ const (
 )
 
 // Rate limit settings
-const (
-	RateLimitRate  = 0
-	RateLimitBurst = 1
+var (
+	RateLimitRate  float64 = 0
+	RateLimitBurst         = 1
 )
 
 // Time limit settings
-const (
+var (
 	TimeLimit = 500 * time.Millisecond
 )
 
@@ -44,8 +44,21 @@ var (
 	Delay = 0 * time.Millisecond
 )
 
+// Update rate limit request
+type UpdateRateLimitRequest struct {
+	Rate  float64 `json:"rate"`
+	Burst int     `json:"burst"`
+}
+
+// Update time limit request
+type UpdateTimeLimitRequest struct {
+	// Timeout in milliseconds
+	Timeout int64 `json:"timeout"`
+}
+
 // Update delay request
 type UpdateDelayRequest struct {
+	// Delay in milliseconds
 	Delay int64 `json:"delay"`
 }
 
@@ -85,6 +98,13 @@ func newHandler() http.Handler {
 	handler.Use(WithRateLimit(RateLimitRate, RateLimitBurst))
 	handler.Use(WithTimeLimit(TimeLimit))
 	handler.GET("/ping", handlePing)
+
+	handler.GET("/rate-limit", handleGetRateLimit)
+	handler.PUT("/rate-limit", handleUpdateRateLimit)
+
+	handler.GET("/time-limit", handleGetTimeLimit)
+	handler.PUT("/time-limit", handleUpdateTimeLimit)
+
 	handler.GET("/delay", handleGetDelay)
 	handler.PUT("/delay", handleUpdateDelay)
 	return handler
@@ -139,9 +159,52 @@ var noTimeLimit = func(c *gin.Context) {
 }
 
 func handlePing(c *gin.Context) {
-	time.Sleep(Delay)
+	select {
+	case <-time.After(2 * time.Second):
+		c.JSON(http.StatusOK, gin.H{"message": "pong"})
+	case <-c.Done():
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "request cancelled"})
+	}
+}
 
-	c.JSON(http.StatusOK, gin.H{"message": "pong"})
+func handleGetRateLimit(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"rate": RateLimitRate,
+		"burst": RateLimitBurst,
+	})
+}
+
+func handleUpdateRateLimit(c *gin.Context) {
+	var request UpdateRateLimitRequest
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, buildError(err.Error()))
+		return
+	}
+
+	RateLimitRate = request.Rate
+	RateLimitBurst = request.Burst
+
+	c.Status(http.StatusOK)
+}
+
+func handleGetTimeLimit(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"timeout": TimeLimit / time.Millisecond,
+	})
+}
+
+func handleUpdateTimeLimit(c *gin.Context) {
+	var request UpdateTimeLimitRequest
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, buildError(err.Error()))
+		return
+	}
+
+	TimeLimit = time.Duration(request.Timeout) * time.Millisecond
+
+	c.Status(http.StatusOK)
 }
 
 func handleGetDelay(c *gin.Context) {
@@ -152,11 +215,15 @@ func handleUpdateDelay(c *gin.Context) {
 	var request UpdateDelayRequest
 
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, buildError(err.Error()))
 		return
 	}
 
 	Delay = time.Duration(request.Delay) * time.Millisecond
 
 	c.Status(http.StatusOK)
+}
+
+func buildError(message string) *gin.H {
+	return &gin.H{"error": message}
 }

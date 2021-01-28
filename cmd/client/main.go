@@ -62,7 +62,7 @@ const (
 
 // Load test settings
 const (
-	ConcurrentUsers = 249
+	ConcurrentUsers = 100
 	RequestsPerUser = 100000
 )
 
@@ -119,23 +119,6 @@ func main() {
 	waitGroup.Wait()
 }
 
-func newHTTP2Client() *http.Client {
-	return &http.Client{
-		Transport: newHTTP2Transport(),
-		Timeout:   HTTPClientTimeout,
-	}
-}
-
-func newHTTP2Transport() *http2.Transport {
-	return &http2.Transport{
-		TLSClientConfig:            newTLSClientConfig(),
-		AllowHTTP:                  AllowHTTP,
-		StrictMaxConcurrentStreams: StrictMaxConcurrentStreams,
-		ReadIdleTimeout:            ReadIdleTimeout,
-		PingTimeout:                PingTimeout,
-	}
-}
-
 func newHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: newHTTPTransport(),
@@ -161,12 +144,29 @@ func newHTTPTransport() http.RoundTripper {
 		ReadBufferSize:         HTTPTransportReadBufferSize,
 	}
 
-	err := http2.ConfigureTransport(httpTransport)
-	if err != nil {
-		panic(err)
-	}
+	//err := http2.ConfigureTransport(httpTransport)
+	//if err != nil {
+	//	panic(err)
+	//}
 
 	return httpTransport
+}
+
+func newHTTP2Client() *http.Client {
+	return &http.Client{
+		Transport: newHTTP2Transport(),
+		Timeout:   HTTPClientTimeout,
+	}
+}
+
+func newHTTP2Transport() *http2.Transport {
+	return &http2.Transport{
+		TLSClientConfig:            newTLSClientConfig(),
+		AllowHTTP:                  AllowHTTP,
+		StrictMaxConcurrentStreams: StrictMaxConcurrentStreams,
+		ReadIdleTimeout:            ReadIdleTimeout,
+		PingTimeout:                PingTimeout,
+	}
 }
 
 func newDialContext() DialContext {
