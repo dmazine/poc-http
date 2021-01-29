@@ -25,8 +25,8 @@ const (
 // Server settings
 const (
 	ServerAddr           = ":8443"
-	ServerReadTimeout    = 500 * time.Millisecond
-	ServerWriteTimeout   = 1000 * time.Millisecond
+	ServerReadTimeout    = 1000 * time.Millisecond
+	ServerWriteTimeout   = 5000 * time.Millisecond
 	ServerIdleTimeout    = 60000 * time.Millisecond
 	ServerMaxHeaderBytes = 1 << 20
 )
@@ -39,7 +39,7 @@ const (
 
 // Context timeout settings
 const (
-	Timeout = 0 * time.Millisecond
+	Timeout = 500 * time.Millisecond
 )
 
 // Delay
@@ -107,11 +107,10 @@ func newHTTPServer() *http.Server {
 
 func newHandler() http.Handler {
 	handler := gin.New()
-	handler.Use(WithRateLimit(RateLimitRate, RateLimitBurst))
-	handler.Use(WithTimeout(Timeout))
-	handler.GET("/ping", handlePing)
 	handler.GET("/delay", handleGetDelay)
 	handler.PUT("/delay", handleUpdateDelay)
+	handler.GET("/ping", handlePing)
+	handler.GET("/pong", WithRateLimit(RateLimitRate, RateLimitBurst), WithTimeout(Timeout), handlePong)
 	return handler
 }
 
@@ -141,7 +140,7 @@ func WithoutRateLimit() gin.HandlerFunc {
 
 func WithTimeout(timeout time.Duration) gin.HandlerFunc {
 	if timeout == 0 {
-		return noTimeLimit
+		return WithoutTimeLimit
 	}
 
 	return func(c *gin.Context) {
@@ -160,24 +159,8 @@ func WithTimeout(timeout time.Duration) gin.HandlerFunc {
 	}
 }
 
-var noTimeLimit = func(c *gin.Context) {
+var WithoutTimeLimit = func(c *gin.Context) {
 	c.Next()
-}
-
-func handlePing(c *gin.Context) {
-	ctx := c.Request.Context()
-	delay := calculateDelay()
-
-	select {
-	case <-time.After(delay):
-		c.JSON(http.StatusOK, gin.H{"message": "pong"})
-		return
-
-	case <-ctx.Done():
-		// if the context is done it timed out or was cancelled
-		c.JSON(http.StatusInternalServerError, buildError(ctx.Err().Error()))
-		return
-	}
 }
 
 func handleGetDelay(c *gin.Context) {
@@ -206,15 +189,36 @@ func handleUpdateDelay(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+func handlePing(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"message": "pong"})
+}
+
+func handlePong(c *gin.Context) {
+	ctx := c.Request.Context()
+	delay := calculateDelay()
+
+	select {
+	case <-time.After(delay):
+		c.JSON(http.StatusOK, gin.H{"message": "ping"})
+		return
+
+	case <-ctx.Done():
+		// if the context is done it timed out or was cancelled
+		c.AbortWithStatusJSON(http.StatusInternalServerError, buildError(ctx.Err().Error()))
+		return
+	}
+}
+
 func buildError(message string) *gin.H {
 	return &gin.H{"error": message}
 }
 
 func calculateDelay() time.Duration {
-	if MaximumDelay == MinimumDelay {
-		return time.Duration(0) * time.Millisecond
+	delay := MinimumDelay
+
+	if MaximumDelay > MinimumDelay {
+		delay += rand.Int63n(MaximumDelay-MinimumDelay)
 	}
 
-	delay := rand.Int63n(MaximumDelay-MinimumDelay) + MinimumDelay
 	return time.Duration(delay) * time.Millisecond
 }
