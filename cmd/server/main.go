@@ -5,7 +5,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"time"
 
@@ -30,37 +32,45 @@ const (
 )
 
 // Rate limit settings
-var (
+const (
 	RateLimitRate  float64 = 0
 	RateLimitBurst         = 1
 )
 
-// Time limit settings
-var (
-	TimeLimit = 500 * time.Millisecond
+// Context timeout settings
+const (
+	Timeout = 0 * time.Millisecond
 )
 
 // Delay
 var (
-	Delay = 0 * time.Millisecond
+	MinimumDelay int64 = 0
+	MaximumDelay int64 = 0
 )
-
-// Update rate limit request
-type UpdateRateLimitRequest struct {
-	Rate  float64 `json:"rate"`
-	Burst int     `json:"burst"`
-}
-
-// Update time limit request
-type UpdateTimeLimitRequest struct {
-	// Timeout in milliseconds
-	TimeLimit int64 `json:"timeLimit"`
-}
 
 // Update delay request
 type UpdateDelayRequest struct {
-	// Delay in milliseconds
-	Delay int64 `json:"delay"`
+	// Minimum delay in milliseconds
+	MinimumDelay int64 `json:"minimumDelay"`
+
+	// Maximum delay in milliseconds
+	MaximumDelay int64 `json:"maximumDelay"`
+}
+
+func (r *UpdateDelayRequest) Validate() error {
+	if r.MinimumDelay < 0 {
+		return errors.New("MinimumDelay can not be negative")
+	}
+
+	if r.MaximumDelay < 0 {
+		return errors.New("MaximumDelay can not be negative")
+	}
+
+	if r.MinimumDelay > r.MaximumDelay {
+		return errors.New("MinimumDelay can not be greater than MaximumDelay")
+	}
+
+	return nil
 }
 
 func main() {
@@ -98,15 +108,8 @@ func newHTTPServer() *http.Server {
 func newHandler() http.Handler {
 	handler := gin.New()
 	handler.Use(WithRateLimit(RateLimitRate, RateLimitBurst))
-	handler.Use(WithTimeLimit(TimeLimit))
+	handler.Use(WithTimeout(Timeout))
 	handler.GET("/ping", handlePing)
-
-	handler.GET("/rate-limit", handleGetRateLimit)
-	handler.PUT("/rate-limit", handleUpdateRateLimit)
-
-	handler.GET("/time-limit", handleGetTimeLimit)
-	handler.PUT("/time-limit", handleUpdateTimeLimit)
-
 	handler.GET("/delay", handleGetDelay)
 	handler.PUT("/delay", handleUpdateDelay)
 	return handler
@@ -136,7 +139,7 @@ func WithoutRateLimit() gin.HandlerFunc {
 	}
 }
 
-func WithTimeLimit(timeout time.Duration) gin.HandlerFunc {
+func WithTimeout(timeout time.Duration) gin.HandlerFunc {
 	if timeout == 0 {
 		return noTimeLimit
 	}
@@ -163,10 +166,12 @@ var noTimeLimit = func(c *gin.Context) {
 
 func handlePing(c *gin.Context) {
 	ctx := c.Request.Context()
+	delay := calculateDelay()
 
 	select {
-	case <-time.After(Delay):
+	case <-time.After(delay):
 		c.JSON(http.StatusOK, gin.H{"message": "pong"})
+		return
 
 	case <-ctx.Done():
 		// if the context is done it timed out or was cancelled
@@ -175,48 +180,11 @@ func handlePing(c *gin.Context) {
 	}
 }
 
-func handleGetRateLimit(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"rate":  RateLimitRate,
-		"burst": RateLimitBurst,
-	})
-}
-
-func handleUpdateRateLimit(c *gin.Context) {
-	var request UpdateRateLimitRequest
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, buildError(err.Error()))
-		return
-	}
-
-	RateLimitRate = request.Rate
-	RateLimitBurst = request.Burst
-
-	c.Status(http.StatusOK)
-}
-
-func handleGetTimeLimit(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"timeout": TimeLimit / time.Millisecond,
-	})
-}
-
-func handleUpdateTimeLimit(c *gin.Context) {
-	var request UpdateTimeLimitRequest
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, buildError(err.Error()))
-		return
-	}
-
-	TimeLimit = time.Duration(request.TimeLimit) * time.Millisecond
-
-	c.Status(http.StatusOK)
-}
-
 func handleGetDelay(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"delay": Delay / time.Millisecond})
+	c.JSON(http.StatusOK, gin.H{
+		"MinimumDelay": MinimumDelay,
+		"MaximumDelay": MaximumDelay,
+	})
 }
 
 func handleUpdateDelay(c *gin.Context) {
@@ -227,11 +195,26 @@ func handleUpdateDelay(c *gin.Context) {
 		return
 	}
 
-	Delay = time.Duration(request.Delay) * time.Millisecond
+	if err := request.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, buildError(err.Error()))
+		return
+	}
+
+	MinimumDelay = request.MinimumDelay
+	MaximumDelay = request.MaximumDelay
 
 	c.Status(http.StatusOK)
 }
 
 func buildError(message string) *gin.H {
 	return &gin.H{"error": message}
+}
+
+func calculateDelay() time.Duration {
+	if MaximumDelay == MinimumDelay {
+		return time.Duration(0) * time.Millisecond
+	}
+
+	delay := rand.Int63n(MaximumDelay-MinimumDelay) + MinimumDelay
+	return time.Duration(delay) * time.Millisecond
 }
